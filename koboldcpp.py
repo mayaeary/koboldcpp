@@ -44,7 +44,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.76"
+KcppVersion = "1.77"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -1415,10 +1415,13 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         detected_upload_filename = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
                         if detected_upload_filename and len(detected_upload_filename)>0:
                             utfprint(f"Detected uploaded file: {detected_upload_filename[0]}")
-                            file_data = fpart.split(b'\r\n\r\n')[1].rsplit(b'\r\n', 1)[0]
-                            file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
-                            base64_string = f"data:audio/wav;base64,{file_data_base64}"
-                            return base64_string
+                            file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
+                            file_content_end = fpart.rfind(b'\r\n')  # Ending boundary
+                            if file_content_start != -1 and file_content_end != -1:
+                                file_data = fpart[file_content_start:file_content_end]
+                                file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
+                                base64_string = f"data:audio/wav;base64,{file_data_base64}"
+                                return base64_string
             print("Uploaded file not found.")
             return None
         except Exception as e:
@@ -1948,6 +1951,8 @@ Enter Prompt:<br>
 
         reqblocking = False
         muint = int(args.multiuser)
+        if muint<=0 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="")):
+            muint = 2 # this prevents errors when using voice/img together with text
         multiuserlimit = ((muint-1) if muint > 1 else 6)
         #backwards compatibility for up to 7 concurrent requests, use default limit of 7 if multiuser set to 1
         if muint > 0 and requestsinqueue < multiuserlimit:
@@ -2250,8 +2255,8 @@ def show_gui():
 
     import customtkinter as ctk
     nextstate = 0 #0=exit, 1=launch
-    original_windowwidth = 550
-    original_windowheight = 550
+    original_windowwidth = 580
+    original_windowheight = 560
     windowwidth = original_windowwidth
     windowheight = original_windowheight
     ctk.set_appearance_mode("dark")
@@ -2700,9 +2705,12 @@ def show_gui():
             tensor_split_entry.grid_remove()
             splitmode_box.grid_remove()
 
-        if index == "Use Vulkan":
+        if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)":
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
             tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
+            quick_use_flashattn.grid_remove()
+        else:
+            quick_use_flashattn.grid(row=22, column=1, padx=8, pady=1,  stick="nw")
 
         if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
@@ -2752,12 +2760,13 @@ def show_gui():
         "Disable MMAP": [disablemmap,  "Avoids using mmap to load models if enabled"],
         "Use ContextShift": [contextshift, "Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info."],
         "Remote Tunnel": [remotetunnel,  "Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."],
-        "Use FlashAttention": [flashattention, "Enable flash attention for GGUF models."],
         "Quiet Mode": [quietmode, "Prevents all generation related terminal output from being displayed."]
     }
 
     for idx, (name, properties) in enumerate(quick_boxes.items()):
         makecheckbox(quick_tab, name, properties[0], int(idx/2) + 20, idx % 2, tooltiptxt=properties[1])
+
+    quick_use_flashattn = makecheckbox(quick_tab, "Use FlashAttention", flashattention, 22, 1, tooltiptxt="Enable flash attention for GGUF models.")
 
     # context size
     makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 0, len(contextsize_text)-1, 30, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
